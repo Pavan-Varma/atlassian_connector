@@ -1,0 +1,108 @@
+import requests
+import json
+import logging
+from requests.auth import HTTPBasicAuth
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Confluence credentials (use environment variables for security)
+CONFLUENCE_URL = 'https://atlassian url/wiki'
+CONFLUENCE_USERNAME = 'your_username'
+CONFLUENCE_API_TOKEN = 'your api key'
+
+
+OLLAMA_MODEL = "llama3"  # Use the correct model name in Ollama
+
+# Update the space key to your actual space key
+CONFLUENCE_SPACE_KEY = "space_name"  # Replace with your actual space key in Confluence
+
+def generate_content_and_title(prompt):
+    """Generates a title and content using Ollama's LLaMA API."""
+    try:
+        logging.info("Sending request to Ollama's LLaMA API")
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": OLLAMA_MODEL, "prompt": prompt},
+            timeout=30  # Set a timeout for the request
+        )
+        logging.info(f"Response status code: {response.status_code}")
+        response.raise_for_status()
+        
+        # Log the response content for debugging
+        logging.info(f"Response content: {response.text}")
+        
+        # Read the response line by line and concatenate the 'response' fields
+        result = ""
+        for line in response.iter_lines():
+            if line:
+                line_json = json.loads(line)
+                result += line_json.get("response", "")
+        
+        # Splitting title and content (assuming first line is the title)
+        title, content = result.split("\n", 1)
+        logging.info("Content generated successfully")
+        return title.strip(), content.strip()
+
+    except requests.exceptions.Timeout:
+        logging.error("Request to Ollama's LLaMA API timed out")
+        return None, None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request to Ollama's LLaMA API failed: {str(e)}")
+        return None, None
+    except json.JSONDecodeError as e:
+        logging.error(f"JSON decode error: {str(e)}")
+        return None, None
+    except Exception as e:
+        logging.error(f"Error generating content: {str(e)}")
+        return None, None
+
+
+def create_confluence_page(title, content):
+    """Creates a new page in Confluence."""
+    url = f"{CONFLUENCE_URL}/rest/api/content/"
+    headers = {"Content-Type": "application/json"}
+    
+    data = {
+        "type": "page",
+        "title": title,
+        "space": {"key": CONFLUENCE_SPACE_KEY},  # Set space key here
+        "body": {
+            "storage": {
+                "value": f"<p>{content}</p>",
+                "representation": "storage"
+            }
+        },
+        "version": {"number": 1}
+    }
+    
+    try:
+        logging.info("Sending request to create a new Confluence page")
+        response = requests.post(
+            url,
+            headers=headers,
+            data=json.dumps(data),
+            auth=HTTPBasicAuth(CONFLUENCE_USERNAME, CONFLUENCE_API_TOKEN)
+        )
+
+        if response.status_code in [200, 201]:
+            logging.info("New Confluence page created successfully!")
+            # Output the page URL to access it directly
+            response_data = response.json()
+            page_url = f"{CONFLUENCE_URL}{response_data['_links']['webui']}"
+            logging.info(f"Page created! Access it at: {page_url}")
+        else:
+            logging.error(f"Failed to create page: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        logging.error(f"Error creating Confluence page: {str(e)}")
+
+
+if __name__ == "__main__":
+    user_prompt = "Create a title and content for a Confluence page about 'Creating sample AI agents'."
+    title, content = generate_content_and_title(user_prompt)
+
+    if title and content:
+        create_confluence_page(title, content)
+    else:
+        logging.error("Error: Could not generate content or title.")
